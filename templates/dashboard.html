@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <h1 class="text-3xl font-bold">Patient Dashboard</h1>
+        <div class="flex gap-3">
+            <input type="text" id="searchInput" placeholder="Search patient..." class="px-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+            <select id="statusFilter" class="px-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                <option value="all">All Status</option>
+                <option value="normal">Normal</option>
+                <option value="warning">Warning</option>
+                <option value="critical">Critical</option>
+            </select>
+        </div>
+    </div>
+    <div id="patientGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Patient cards will be injected here -->
+        <div class="text-center py-12">Loading patient data...</div>
+    </div>
+</div>
+
+<script>
+    let currentData = null;
+
+    function updateDashboard(data) {
+        currentData = data;
+        renderPatientCards();
+    }
+
+    function renderPatientCards() {
+        const search = document.getElementById('searchInput').value.toLowerCase();
+        const statusFilter = document.getElementById('statusFilter').value;
+        if (!currentData) return;
+
+        let patient = currentData;
+        if (search && !patient.name.toLowerCase().includes(search)) {
+            document.getElementById('patientGrid').innerHTML = '<div class="text-center py-12">No patients found</div>';
+            return;
+        }
+        if (statusFilter !== 'all' && patient.status !== statusFilter) {
+            document.getElementById('patientGrid').innerHTML = '<div class="text-center py-12">No patients found</div>';
+            return;
+        }
+
+        const remainingPercent = (patient.remainingFluid / 500) * 100;
+        const statusClass = patient.status === 'normal' ? 'status-normal' : (patient.status === 'warning' ? 'status-warning' : 'status-critical');
+        const card = `
+            <div class="card cursor-pointer hover:-translate-y-2 transition-transform duration-300" onclick="location.href='/patient/${patient.id}'">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-lg font-bold">${patient.name}</h3>
+                        <p class="text-sm text-gray-500">${patient.bed} · ${patient.ward}</p>
+                    </div>
+                    <span class="px-2 py-1 rounded-full text-xs font-semibold ${statusClass}">${patient.status === 'normal' ? '🟢 Normal' : (patient.status === 'warning' ? '🟡 Warning' : '🔴 Critical')}</span>
+                </div>
+                <div class="space-y-2 mt-4">
+                    <div class="flex justify-between text-sm"><span>Flow Rate</span><span class="font-semibold">${patient.flowRate} mL/hr</span></div>
+                    <div class="flex justify-between text-sm"><span>Remaining</span><span class="font-semibold">${patient.remainingFluid} mL</span></div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"><div class="bg-green-500 h-2 rounded-full transition-all duration-500" style="width: ${Math.min(100, remainingPercent)}%"></div></div>
+                </div>
+            </div>
+        `;
+        document.getElementById('patientGrid').innerHTML = card;
+    }
+
+    // Event listeners for filters
+    document.getElementById('searchInput').addEventListener('input', renderPatientCards);
+    document.getElementById('statusFilter').addEventListener('change', renderPatientCards);
+
+    // SSE connection
+    const evtSource = new EventSource('/stream');
+    evtSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        updateDashboard(data);
+    };
+</script>
+{% endblock %}

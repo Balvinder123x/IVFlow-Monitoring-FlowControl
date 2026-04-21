@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-6">Active Alerts</h1>
+    <div id="alertsList" class="space-y-4">
+        <div class="text-center py-12">Loading alerts...</div>
+    </div>
+</div>
+<script>
+    function updateAlerts(data) {
+        let alerts = [];
+        if (data.remainingFluid < 50) alerts.push({ severity: 'critical', message: 'Bottle empty soon!' });
+        else if (data.remainingFluid < 150) alerts.push({ severity: 'warning', message: 'Low fluid level' });
+        if (data.flowRate < 10) alerts.push({ severity: 'critical', message: 'Flow stopped / blockage' });
+        if (data.flowRate > 180) alerts.push({ severity: 'warning', message: 'Abnormal high flow' });
+
+        if (alerts.length === 0) {
+            document.getElementById('alertsList').innerHTML = '<div class="card text-center text-gray-500 py-12">✅ No active alerts. All patients are stable.</div>';
+            return;
+        }
+        const html = alerts.map(alert => `
+            <div class="card border-l-8 ${alert.severity === 'critical' ? 'border-red-500 bg-red-50 dark:bg-red-900/20' : 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20'}">
+                <div class="flex justify-between items-center">
+                    <div><p class="font-bold">${alert.severity === 'critical' ? '🔴 CRITICAL' : '🟡 WARNING'}</p><p>${alert.message}</p><p class="text-xs text-gray-500">Patient: IVMonitor01 · ${new Date().toLocaleTimeString()}</p></div>
+                </div>
+            </div>
+        `).join('');
+        document.getElementById('alertsList').innerHTML = html;
+    }
+
+    const evtSource = new EventSource('/stream');
+    evtSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        updateAlerts(data);
+    };
+</script>
+{% endblock %}

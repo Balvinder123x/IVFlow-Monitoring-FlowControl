@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Patient Details{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-8">
+    <a href="/" class="text-green-500 hover:underline inline-flex items-center gap-1 mb-6">← Back to Dashboard</a>
+    <div id="patientDetail" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- loading indicator -->
+        <div class="card col-span-3 text-center py-12">Loading patient data...</div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    let flowChart = null;
+
+    function updatePatientUI(data) {
+        const remainingPercent = (data.remainingFluid / 500) * 100;
+        const statusClass = data.status === 'normal' ? 'status-normal' : (data.status === 'warning' ? 'status-warning' : 'status-critical');
+        const modeText = data.mode === 'AUTO' ? 'AUTO' : 'MANUAL';
+        const html = `
+            <div class="card space-y-4">
+                <div class="flex justify-between items-start">
+                    <div><h2 class="text-2xl font-bold">${data.name}</h2><p class="text-gray-500">${data.bed} · ${data.ward}</p></div>
+                    <span class="px-2 py-1 rounded-full text-xs font-semibold ${statusClass}">${data.status === 'normal' ? '🟢 Normal' : (data.status === 'warning' ? '🟡 Warning' : '🔴 Critical')}</span>
+                </div>
+                <div class="border-t pt-4"><p><strong>Patient ID:</strong> ${data.id}</p><p><strong>Drop Count:</strong> ${data.dropCount}</p><p><strong>Mode:</strong> ${data.mode}</p><p><strong>Servo Angle:</strong> ${data.servoAngle}°</p></div>
+            </div>
+            <div class="card flex flex-col items-center">
+                <h3 class="text-sm font-medium mb-2">Flow Rate</h3>
+                <div class="relative w-40 h-40"><canvas id="gaugeCanvas"></canvas></div>
+                <p class="mt-2 text-2xl font-bold">${data.flowRate} <span class="text-sm">mL/hr</span></p>
+            </div>
+            <div class="card flex flex-col items-center">
+                <h3 class="text-sm font-medium mb-2">Remaining Fluid</h3>
+                <div class="relative w-32 h-48 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border-2 border-gray-300"><div class="absolute bottom-0 w-full bg-green-500 transition-all duration-500" style="height: ${remainingPercent}%"></div><div class="absolute inset-0 flex items-center justify-center text-sm font-bold text-white drop-shadow">${data.remainingFluid} mL</div></div>
+            </div>
+            <div class="card lg:col-span-3">
+                <h3 class="text-lg font-semibold mb-4">Controls</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div><label class="block text-sm font-medium">Target Flow Rate (mL/hr)</label><div class="flex gap-2 mt-1"><input type="number" id="targetFlow" value="${data.targetFlowRate}" class="flex-1 px-3 py-2 rounded-lg border" min="0" max="200"><button onclick="setTarget()" class="bg-green-500 text-white px-4 py-2 rounded-lg">Set</button></div></div>
+                    <div><label class="block text-sm font-medium">Mode</label><button id="modeToggle" class="w-full mt-1 py-2 rounded-lg font-semibold ${data.mode === 'AUTO' ? 'bg-blue-500' : 'bg-gray-500'} text-white">Switch to ${data.mode === 'AUTO' ? 'MANUAL' : 'AUTO'}</button></div>
+                    <div id="manualControl" style="display: ${data.mode === 'MANUAL' ? 'block' : 'none'}"><label class="block text-sm font-medium">Manual Servo Angle: <span id="servoValue">${data.servoAngle}</span>°</label><input type="range" id="servoSlider" min="0" max="180" value="${data.servoAngle}" class="w-full mt-1"></div>
+                </div>
+            </div>
+            <div class="card lg:col-span-3">
+                <h3 class="text-lg font-semibold mb-4">Flow Rate History</h3>
+                <canvas id="historyChart" width="800" height="300"></canvas>
+            </div>
+        `;
+        document.getElementById('patientDetail').innerHTML = html;
+
+        // Draw gauge
+        drawGauge(data.flowRate);
+        // Setup chart if not already
+        if (!flowChart) initChart();
+        // Add event listeners
+        document.getElementById('modeToggle').addEventListener('click', toggleMode);
+        const slider = document.getElementById('servoSlider');
+        if (slider) {
+            slider.addEventListener('input', (e) => {
+                document.getElementById('servoValue').innerText = e.target.value;
+                sendCommand('ANGLE', parseInt(e.target.value));
+            });
+        }
+    }
+
+    function drawGauge(flow) {
+        const canvas = document.getElementById('gaugeCanvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const w = 160, h = 160;
+        canvas.width = w; canvas.height = h;
+        const centerX = w/2, centerY = h/2, radius = 70;
+        const startAngle = -Math.PI / 2;
+        const endAngle = Math.PI / 2;
+        const maxFlow = 200;
+        const percent = Math.min(1, flow / maxFlow);
+        const angle = startAngle + percent * Math.PI;
+
+        ctx.clearRect(0, 0, w, h);
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 12;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, startAngle, angle);
+        ctx.strokeStyle = '#22c55e';
+        ctx.stroke();
+
+        ctx.font = 'bold 20px Inter';
+        ctx.fillStyle = 'currentColor';
+        ctx.fillText(flow, centerX-15, centerY+8);
+        ctx.font = '10px Inter';
+        ctx.fillStyle = 'gray';
+        ctx.fillText('mL/hr', centerX-12, centerY+25);
+    }
+
+    let historyData = [];
+    function initChart() {
+        const ctx = document.getElementById('historyChart').getContext('2d');
+        flowChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'Flow Rate (mL/hr)', data: [], borderColor: '#22c55e', tension: 0.3, fill: false }] },
+            options: { responsive: true, maintainAspectRatio: true, scales: { y: { min: 0, max: 200 } } }
+        });
+    }
+
+    function updateChart(flow) {
+        if (!flowChart) return;
+        const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        flowChart.data.labels.push(now);
+        flowChart.data.datasets[0].data.push(flow);
+        if (flowChart.data.labels.length > 20) {
+            flowChart.data.labels.shift();
+            flowChart.data.datasets[0].data.shift();
+        }
+        flowChart.update();
+    }
+
+    function sendCommand(command, value) {
+        fetch('/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: command, value: value })
+        }).then(res => res.json()).then(data => console.log('Command sent', data));
+    }
+
+    function setTarget() {
+        const target = document.getElementById('targetFlow').value;
+        sendCommand('TARGET', parseFloat(target));
+    }
+
+    function toggleMode() {
+        const currentMode = document.getElementById('modeToggle').innerText.includes('AUTO') ? 'AUTO' : 'MANUAL';
+        const newMode = currentMode === 'AUTO' ? 'MANUAL' : 'AUTO';
+        sendCommand('MODE', newMode);
+        document.getElementById('modeToggle').innerText = `Switch to ${newMode === 'AUTO' ? 'MANUAL' : 'AUTO'}`;
+        document.getElementById('manualControl').style.display = newMode === 'MANUAL' ? 'block' : 'none';
+    }
+
+    // SSE
+    const evtSource = new EventSource('/stream');
+    evtSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        updatePatientUI(data);
+        updateChart(data.flowRate);
+    };
+</script>
+{% endblock %}
